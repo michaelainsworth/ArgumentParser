@@ -1,107 +1,102 @@
 #include <ArgumentParser/ArgumentParser.hpp>
+#include <iostream>
 
 namespace ArgumentParser {
 
-    ArgumentParser::Status ArgumentParser::getArguments(std::string& first, Arguments &args) {
-        std::cout << "=> ";
-        
-        std::string line;
-        if (!std::getline(std::cin, line)) {
-            std::cout << std::endl;
-            return StatusEnd;
+    bool isSuccess(ArgumentParser::Status status) {
+        return ArgumentParser::StatusOk == status;
+    }
+
+    bool isPartial(ArgumentParser::Status status) {
+        return ArgumentParser::StatusQuoteSingle == status || ArgumentParser::StatusQuoteDouble == status;
+    }
+
+    bool isError(ArgumentParser::Status status) {
+        return ArgumentParser::ErrorEscapeSequenceInvalid == status ||
+            ArgumentParser::ErrorSingleUnterminated == status ||
+            ArgumentParser::ErrorDoubleUnterminated == status;
+    }
+
+    ArgumentParser::ArgumentParser() : status_(StatusOk) {}
+
+    ArgumentParser::Status ArgumentParser::parse(Arguments &args, const std::string& line) {
+        current_ = "";
+        status_ = StatusOk;
+        return continueParsing(args, line, status_);
+    }
+
+    ArgumentParser::Status ArgumentParser::continueParsing(Arguments& args, const std::string& line, Status status) {
+        status_ = status;
+
+        std::string::size_type i = 0;
+        if (StatusOk == status_) {
+            return parseArray(args, line);
+        } else if (StatusQuoteSingle == status_) {
+            return continueQuote(args, line, '\'', StatusQuoteSingle, i);
+        } else if (StatusQuoteDouble == status_) {
+            return continueQuote(args, line, '"', StatusQuoteDouble, i);
+        } else {
+            return status_;
         }
-        
-        std::string arg;
-        
-        bool topOk = true;
+    }
+
+    ArgumentParser::Status ArgumentParser::continueQuote(Arguments& args, const std::string& line, char delim, Status continueStatus, std::string::size_type& i) {
+        for (std::string::size_type l = line.length(); i < l; ++i) {
+            char c = line[i];
+            if (delim == c) {
+                args.push_back(current_);
+                current_ = "";
+                status_ = StatusOk;
+                return status_;
+            } else if ('\\' == c) {
+                if (i < l - 1) {
+                    char n = line[i + 1];
+                    if ('\\' == n || delim == n) {
+                        current_ += n;
+                        ++i;
+                    } else {
+                        status_ = ErrorEscapeSequenceInvalid;
+                        return status_;
+                    }
+                } else {
+                    status_ = ErrorSingleUnterminated;
+                    return status_;
+                }
+            } else {
+                current_ += c;
+            }
+        }
+
+        current_ += "\n";
+        status_ = continueStatus;
+        return status_;
+    }
+
+    ArgumentParser::Status ArgumentParser::parseArray(Arguments& args, const std::string& line) {
         for (std::string::size_type i = 0, l = line.length(); i < l; ++i) {
             char c = line[i];
             if (std::isspace(c)) {
-                if (arg.size()) {
-                    args.push_back(arg);
-                    arg = "";
+                if (current_.size()) {
+                    args.push_back(current_);
+                    current_ = "";
                 }
             } else if ('"' == c) {
-                bool ok = false;
-                for (++i; i < l; ++i) {
-                    c = line[i];
-                    if ('"' == c) {
-                        args.push_back(arg);
-                        arg = "";
-                        ok = true;
-                        break;
-                    } else if ('\\' == c) {
-                        if (i < l - 1 && '"' == line[i+1]) {
-                            arg += line[i+1];
-                            ++i;
-                        }
-                    } else {
-                        arg += c;
-                    }
-                }
-                
-                if (!ok) {
-                    topOk = false;
-                    std::cerr << "Invalid double-quoted string." << std::endl;
-                    break;
-                }
+                ++i;
+                continueQuote(args, line, '"', StatusQuoteDouble, i);
             } else if ('\'' == c) {
-                bool ok = false;
-                for (++i; i < l; ++i) {
-                    c = line[i];
-                    if ('\'' == c) {
-                        args.push_back(arg);
-                        arg = "";
-                        ok = true;
-                        break;
-                    } else if ('\\' == c) {
-                        if (i < l - 1 && '\'' == line[i+1]) {
-                            arg += line[i+1];
-                            ++i;
-                        }
-                    } else {
-                        arg += c;
-                    }
-                }
-                
-                if (!ok) {
-                    topOk = false;
-                    std::cerr << "Invalid single-quoted string." << std::endl;
-                    break;
-                }
+                ++i;
+                continueQuote(args, line, '\'', StatusQuoteSingle, i);
             } else {
-                arg += c;
+                current_ += c;
             }
         }
         
-        if (arg.length()) {
-            args.push_back(arg);
+        if (StatusOk == status_ && current_.length()) {
+            args.push_back(current_);
+            current_ = "";
         }
-        
-        if (topOk) {
-            if (!args.size()) {
-                std::cerr << "You must enter a command." << std::endl;
-                return StatusError;
-            } else {
-                Arguments other;
-                Arguments::iterator it = args.begin(), end = args.end();
-                unsigned i = 0;
-                for (; it != end; ++it) {
-                    if (0 == i) {
-                        first = *it;
-                    } else {
-                        other.push_back(*it);
-                    }
-                    ++i;
-                }
-                
-                args = other;
-                
-                return StatusOk;
-            }
-        } else {
-            return StatusError;
-        }
+
+        return status_;
     }
 
 }
